@@ -14,7 +14,6 @@ defmt-rtt = "1"
 panic-probe = { version = "1", features = ["print-defmt"] }
 
 # We're using a Pico by default on this template
-rp-pico = "0.9"
 nfp1315 = "1.0.0"
 
 # but you can use any BSP. Uncomment this to use the pro_micro_rp2040 BSP instead
