@@ -97,7 +97,6 @@ fn main() -> ! {
     pwm.set_top(0);
     pwm.set_ph_correct();
     pwm.enable();
-    Vec
 
     // Output channel A on PWM0 to GPIO 0
     let channel = &mut pwm.channel_a;

@@ -1,23 +1,44 @@
-use cortex_m::asm::delay;
-use defmt::info;
+use cortex_m::{ asm::delay };
 
 use embedded_hal::digital::{ OutputPin, PinState };
-use rp2040_hal::{ self as hal };
+use PinState::{ Low, High };
 
+use rp2040_hal::{ self as hal, gpio::AnyPin };
 use hal::{
-    gpio::{ PinGroup },
-    //gpio::pin_group::{ WritePinHList, ReadPinHList }
+    gpio::{ PinGroup }
 };
 
-use frunk::labelled::chars::{ H, T };
+pub struct DataBus<Output> {
+    pub pins: [Output; 8]
+}
+
+impl<Output> DataBus<Output>
+where
+    Output: AnyPin
+{
+    pub fn new(pins_arg: [Output; 8]) -> Self {
+        Self {
+            pins: pins_arg
+        }
+    }
+
+    pub fn as_pg(&mut self) -> PinGroup {
+        let n = PinGroup::new();
+        for pin in self.pins {
+            n.add_pin(pin);
+        }
+        n
+    }
+}
 
 /// A device-specific HAL for the YM2149F PSG chip.
 pub struct YM2149<BC1, BDIR>
 where
     BC1: OutputPin,
-    BDIR: OutputPin
+    BDIR: OutputPin,
 {
-    data_bus: PinGroup<frunk::hlist::HCons<H, T>>,
+    data_bus: DataBus<>,
+    master_clock_frequency: u32,
     bc1: BC1,
     bdir: BDIR
 }
@@ -128,8 +149,6 @@ pub enum Mode {
     ADDRESS
 }
 
-use PinState::{ Low, High };
-
 impl Mode {
     pub const STATES: [(PinState, PinState, PinState); 4] = [
         (Low, High, Low),  // INACTIVE
@@ -143,14 +162,38 @@ impl Mode {
     }
 }
 
-impl <BC1, BDIR> YM2149<BC1, BDIR>
+
+pub enum AudioChannel {
+    A,
+    B,
+    C
+}
+
+impl AudioChannel {
+    pub fn tone(&mut self, period: u16) {
+        let tp: [u8; 2] = period.to_le_bytes();
+        self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
+        self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
+    }
+
+    pub fn tone_hz(&mut self, channel: AudioChannel, frequency: u32) {
+        let tp: [u8; 4] = (self.master_clock_frequency / (16 * frequency)).to_le_bytes();
+
+        self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
+        self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
+        // The remaining bytes are IGNORED
+    }
+}
+
+impl <BC1, BDIR>YM2149<BC1, BDIR>
 where
     BC1: OutputPin,
     BDIR: OutputPin
 {
-    pub fn new(data_bus: PinGroup<frunk::hlist::HCons<H, T>>, bc1: BC1, bdir: BDIR) -> Self {
+    pub fn new(data_bus: PinGroup, master_clock_frequency: u32, bc1: BC1, bdir: BDIR) -> Self {
         Self {
             data_bus: data_bus,
+            master_clock_frequency: master_clock_frequency,
             bc1,
             bdir
         }
@@ -158,17 +201,11 @@ where
 
     pub fn set_mode(&mut self, mode: Mode) {
         let (bdir, _, bc1) = *mode.pin_states();
-
-
         self.bdir.set_state(bdir).unwrap();
-        //self.bc2.set_state(arr[1]).unwrap();
         self.bc1.set_state(bc1).unwrap();
     }
 
-
-
     pub fn write_register(&mut self, register: Register, value: u8) {
-        info!("Writing to register...");
         self.set_mode(Mode::ADDRESS);
         self.data_bus.set_u32(register);
         self.set_mode(Mode::INACTIVE);
@@ -178,7 +215,6 @@ where
     }
 
     pub fn toneA(&mut self, period: u16) {
-        info!("Playing tone...");
         let tp: [u8; 2] = period.to_le_bytes();
         self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
         self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
@@ -192,9 +228,8 @@ where
         self.write_register(Register::ALevel, volume & 0x0F);
     }
 
-    pub fn tone_hz(&mut self, frequency: u32) {
-        info!("Playing tone (Hz)...");
-        let tp: [u8; 4] = (2_000_000 / (16 * frequency)).to_le_bytes();
+    pub fn tone_hz(&mut self, channel: AudioChannel, frequency: u32) {
+        let tp: [u8; 4] = (self.master_clock_frequency / (16 * frequency)).to_le_bytes();
 
         self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
         self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
@@ -206,5 +241,4 @@ where
         delay(100);
         self.reset.set_high().unwrap();
     }
-
 }
