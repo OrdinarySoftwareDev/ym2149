@@ -1,49 +1,51 @@
-use cortex_m::{ asm::delay };
-
 use embedded_hal::digital::{ OutputPin, PinState };
-use PinState::{ Low, High };
+use PinState::{ High, Low };
+use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PullDown, SioOutput};
 
-use rp2040_hal::{ self as hal, gpio::AnyPin };
-use hal::{
-    gpio::{ PinGroup }
-};
-
-pub struct DataBus<Output> {
-    pub pins: [Output; 8]
+pub trait OutputBus {
+    fn write_u8(&mut self, data: u8);
 }
 
-impl<Output> DataBus<Output>
-where
-    Output: AnyPin
-{
-    pub fn new(pins_arg: [Output; 8]) -> Self {
-        Self {
-            pins: pins_arg
-        }
-    }
+pub struct DataBus<T> {
+    pins: [T; 8]
+}
 
-    pub fn as_pg(&mut self) -> PinGroup {
-        let n = PinGroup::new();
-        for pin in self.pins {
-            n.add_pin(pin);
+impl<T> DataBus<T>
+where
+    T: OutputPin,
+{
+    pub fn new(pins: [T; 8]) -> Self {
+        Self { pins }
+    }
+}
+
+impl OutputBus for DataBus<Pin<DynPinId, FunctionSio<SioOutput>, PullDown>> {
+    fn write_u8(&mut self, data: u8) {
+        for bit in 0..8 {
+            let state = if (data >> bit) & 1 == 1 {
+                High
+            } else {
+                Low
+            };
+            let _ = self.pins[bit].set_state(state);
         }
-        n
     }
 }
 
 /// A device-specific HAL for the YM2149F PSG chip.
-pub struct YM2149<BC1, BDIR>
+pub struct YM2149<DATABUS, BC1, BDIR>
 where
+    DATABUS: OutputBus,
     BC1: OutputPin,
     BDIR: OutputPin,
 {
-    data_bus: DataBus<>,
+    data_bus: DATABUS,
     master_clock_frequency: u32,
     bc1: BC1,
     bdir: BDIR
 }
 
-/// One of the 16 registers (0-15) of the YM2149F sound chip.
+/// One of the 16 registers (0-15) of the YM2149 sound chip.
 ///
 /// Used to select which register to write / read.
 /// Each register controls different aspects of tone generation, noise, mixing,
@@ -137,6 +139,12 @@ pub enum Register {
     DataIoB
 }
 
+impl From<Register> for u8 {
+    fn from(value: Register) -> Self {
+        value as u8
+    }
+}
+
 /// The four main modes of the bus control decoder.
 pub enum Mode {
     /// DA7~DA0 has high impedance.
@@ -157,8 +165,8 @@ impl Mode {
         (High, High, High), // ADDRESS
     ];
 
-    pub fn pin_states(self) -> &'static (PinState, PinState, PinState) {
-        &Self::STATES[self as usize]
+    pub fn pin_states(self) -> (PinState, PinState, PinState) {
+        Self::STATES[self as usize].clone()
     }
 }
 
@@ -169,28 +177,13 @@ pub enum AudioChannel {
     C
 }
 
-impl AudioChannel {
-    pub fn tone(&mut self, period: u16) {
-        let tp: [u8; 2] = period.to_le_bytes();
-        self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
-        self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
-    }
-
-    pub fn tone_hz(&mut self, channel: AudioChannel, frequency: u32) {
-        let tp: [u8; 4] = (self.master_clock_frequency / (16 * frequency)).to_le_bytes();
-
-        self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
-        self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
-        // The remaining bytes are IGNORED
-    }
-}
-
-impl <BC1, BDIR>YM2149<BC1, BDIR>
+impl <DATABUS, BC1, BDIR>YM2149<DATABUS, BC1, BDIR>
 where
+    DATABUS: OutputBus,
     BC1: OutputPin,
     BDIR: OutputPin
 {
-    pub fn new(data_bus: PinGroup, master_clock_frequency: u32, bc1: BC1, bdir: BDIR) -> Self {
+    pub fn new(data_bus: DATABUS, master_clock_frequency: u32, bc1: BC1, bdir: BDIR) -> Self {
         Self {
             data_bus: data_bus,
             master_clock_frequency: master_clock_frequency,
@@ -200,45 +193,35 @@ where
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
-        let (bdir, _, bc1) = *mode.pin_states();
+        let (bdir, _, bc1) = mode.pin_states();
         self.bdir.set_state(bdir).unwrap();
         self.bc1.set_state(bc1).unwrap();
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register<T: Into<u8>>(&mut self, register: T, value: u8) {
         self.set_mode(Mode::ADDRESS);
-        self.data_bus.set_u32(register);
+        self.data_bus.write_u8(register.into());
         self.set_mode(Mode::INACTIVE);
         self.set_mode(Mode::WRITE);
-        self.write_data_bus(value);
+        self.data_bus.write_u8(value);
         self.set_mode(Mode::INACTIVE);
     }
 
-    pub fn toneA(&mut self, period: u16) {
-        let tp: [u8; 2] = period.to_le_bytes();
-        self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
-        self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
-    }
+    pub fn tone(&mut self, channel: AudioChannel, period: u16) {
+        let bytes: [u8; 2] = period.to_le_bytes();
 
-    pub fn enableA(&mut self) {
-        self.write_register(Register::IoPortMixerSettings, 0b00111110);
-    }
+        let register_pair_index = channel as u8 * 2;
 
-    pub fn volumeA(&mut self, volume: u8) {
-        self.write_register(Register::ALevel, volume & 0x0F);
+        self.write_register(register_pair_index, bytes[0]); // Fine tone, 8 bits
+        self.write_register(register_pair_index + 1, bytes[1]); // Rough tone, 4 bits
     }
 
     pub fn tone_hz(&mut self, channel: AudioChannel, frequency: u32) {
-        let tp: [u8; 4] = (self.master_clock_frequency / (16 * frequency)).to_le_bytes();
-
-        self.write_register(Register::AFreq8bitFinetone, tp[0]); // Fine tone, 8 bits
-        self.write_register(Register::AFreq4bitRoughtone, tp[1]); // Rough tone, 4 bits
-        // The remaining bytes are IGNORED
+        let tp: u32 = self.master_clock_frequency / (16 * frequency + 1);
+        self.tone(channel, tp as u16); // Take lowest 16 bits
     }
 
-    pub fn reset_burst(&mut self) {
-        self.reset.set_low().unwrap();
-        delay(100);
-        self.reset.set_high().unwrap();
+    pub fn volume(&mut self, channel: AudioChannel, volume: u8) {
+        self.write_register(8 + channel as u8, volume & 0x0F);
     }
 }
