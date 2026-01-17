@@ -1,124 +1,179 @@
 use cortex_m::asm::delay;
 use defmt::info;
 
-use embedded_hal::digital::{OutputPin, PinState};
+use embedded_hal::digital::{ OutputPin, PinState };
+use rp2040_hal::{ self as hal };
 
+use hal::{
+    gpio::{ PinGroup },
+    //gpio::pin_group::{ WritePinHList, ReadPinHList }
+};
 
-pub struct YM2149F<RESET, D0, D1, D2, D3, D4, D5, D6, D7, BC1, BC2, BDIR>
+use frunk::labelled::chars::{ H, T };
+
+/// A device-specific HAL for the YM2149F PSG chip.
+pub struct YM2149<BC1, BDIR>
 where
-    RESET: OutputPin,
-    D0: OutputPin,
-    D1: OutputPin,
-    D2: OutputPin,
-    D3: OutputPin,
-    D4: OutputPin,
-    D5: OutputPin,
-    D6: OutputPin,
-    D7: OutputPin,
     BC1: OutputPin,
-    BC2: OutputPin,
     BDIR: OutputPin
 {
-    reset: RESET,
-    data_pins: (D0, D1, D2, D3, D4, D5, D6, D7),
+    data_bus: PinGroup<frunk::hlist::HCons<H, T>>,
     bc1: BC1,
-    bc2: BC2,
     bdir: BDIR
 }
 
+/// One of the 16 registers (0-15) of the YM2149F sound chip.
+///
+/// Used to select which register to write / read.
+/// Each register controls different aspects of tone generation, noise, mixing,
+/// amplitude, and envelope.
+///
+/// Check the datasheet / docs for detailed information.
 #[repr(u8)]
 pub enum Register {
+    /// Frequency of channel A: 8 bit fine tone adjustment
     AFreq8bitFinetone,
+    /// Frequency of channel A: 4 bit rough tone adjustment
+    ///
+    /// `Mask: 0x0F`
     AFreq4bitRoughtone,
+
+    /// Frequency of channel B: 8 bit fine tone adjustment
     BFreq8bitFinetone,
+    /// Frequency of channel B: 4 bit rough tone adjustment
+    ///
+    /// `Mask: 0x0F`
     BFreq4bitRoughtone,
+
+    /// Frequency of channel C: 8 bit fine tone adjustment
     CFreq8bitFinetone,
+    /// Frequency of channel C: 4 bit rough tone adjustment
+    ///
+    /// `Mask: 0x0F`
     CFreq4bitRoughtone,
+
+    /// Frequency of noise: 5 bit noise frequency
+    ///
+    /// `Mask: 0x1F`
     NoiseFreq5bit,
+
+    /// **I/O Port and mixer settings**
+    ///
+    /// From the datasheet:
+    /// - Sound is output when '0' is written to the register.
+    /// - Selection of input/output for the I/O ports is determined by bits B7 and B6 of register R7.
+    /// - Input is selected when '0' is written to the register bits.
+    ///
+    /// Bit:    | B7  | B6  | B5  | B4  | B3  | B2  | B1  | B0  |
+    /// --------|-----|-----|-----|-----|-----|-----|-----|-----|
+    /// Type:   | I/O | I/O |Noise|Noise|Noise|Tone |Tone |Tone |
+    /// Channel:| IOB | IOA |  C  |  B  |  A  |  C  |  B  |  A  |
+    ///
+    ///
+    /// **Example:**
+    /// ```no_run
+    /// // Enables only channel A, with IOA and IOB functioning as inputs.
+    /// chip.write_register(
+    ///     Registers::IoPortMixerSettings,
+    ///     0b00111110
+    /// );
+    /// ```
     IoPortMixerSettings,
+
+    /// **Level of channel A**
+    /// ---
+    /// **Level control** (formats identical for ALevel, BLevel and CLevel)
+    ///
+    /// From the datasheet:
+    /// - Mode M selects whether the level is fixed (when M = 0) or variable (M = 1).
+    /// - When M = 0, the level is determined from one of 16 by level selection signals L3, L2, L1, and L0 which compromise the lower four bits.
+    /// - When M = 1, the level is determined by the 5 bit output of E4, E3, E2, E1, and E0 of the envelope generator of the SSG.
+    ///
+    /// | B7 (MSB)  | B6  | B5  | B4  | B3  | B2  | B1  | B0  |
+    /// |-----------|-----|-----|-----|-----|-----|-----|-----|
+    /// | N/A       | N/A | N/A |  M  | L3  | L2  | L1  | L0  |
     ALevel,
+
+    /// **Level of channel B**
+    ///
+    /// Same format as [ALevel](#alevel)
     BLevel,
+
+    /// **Level of channel C**
+    ///
+    /// Same format as [ALevel](#alevel)
     CLevel,
+
+    /// Frequency of envelope: 8 bit fine adjustment
     EFreq8bitFineAdj,
+    /// Frequency of envelope: 8 bit fough adjustment
     EFreq8bitRoughAdj,
+    /// Shape of envelope
     EShape,
+    /// Data of I/O port A
     DataIoA,
+    /// Data of I/O port B
     DataIoB
 }
 
+/// The four main modes of the bus control decoder.
 pub enum Mode {
+    /// DA7~DA0 has high impedance.
     INACTIVE,
-    //READ,
+    /// DA7~DA0 set to output mode, and contents of register currently being addressed are output.
+    READ,
+    /// DA7~DA0 set to input mode, and data is written to register currently being addressed.
     WRITE,
+    /// DA7~DA0 set to input mode, and address is fetched from register array.
     ADDRESS
 }
 
-macro_rules! set_pins {
-    ($value:expr, $pins:expr, $($idx:tt),*) => {
-        $(
-            $pins.$idx.set_state(
-                if ($value >> $idx) & 1 == 1 { PinState::High } else { PinState::Low }
-            ).unwrap();
-        )*
-    };
+use PinState::{ Low, High };
+
+impl Mode {
+    pub const STATES: [(PinState, PinState, PinState); 4] = [
+        (Low, High, Low),  // INACTIVE
+        (High, Low, Low), // READ
+        (Low, Low, High), // WRITE
+        (High, High, High), // ADDRESS
+    ];
+
+    pub fn pin_states(self) -> &'static (PinState, PinState, PinState) {
+        &Self::STATES[self as usize]
+    }
 }
 
-impl <RESET, D0, D1, D2, D3, D4, D5, D6, D7, BC1, BC2, BDIR> YM2149F<RESET, D0, D1, D2, D3, D4, D5, D6, D7, BC1, BC2, BDIR>
+impl <BC1, BDIR> YM2149<BC1, BDIR>
 where
-    RESET: OutputPin,
-    D0: OutputPin,
-    D1: OutputPin,
-    D2: OutputPin,
-    D3: OutputPin,
-    D4: OutputPin,
-    D5: OutputPin,
-    D6: OutputPin,
-    D7: OutputPin,
     BC1: OutputPin,
-    BC2: OutputPin,
-    BDIR: OutputPin,
+    BDIR: OutputPin
 {
-    pub fn new(reset: RESET, d0: D0, d1: D1, d2: D2, d3: D3, d4: D4, d5: D5, d6: D6, d7: D7, bc1: BC1, bc2: BC2, bdir: BDIR) -> Self {
+    pub fn new(data_bus: PinGroup<frunk::hlist::HCons<H, T>>, bc1: BC1, bdir: BDIR) -> Self {
         Self {
-            reset,
-            data_pins: (d0, d1, d2, d3, d4, d5, d6, d7),
+            data_bus: data_bus,
             bc1,
-            bc2,
-            bdir,
+            bdir
         }
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
-        use PinState::{*};
+        let (bdir, _, bc1) = *mode.pin_states();
 
-        let arr: [PinState; 3] = match mode {
-            //MODE:: (...) => [BDIR, BC2, BC1],
-            Mode::INACTIVE => [Low, High, Low],
-            //Mode::READ => [false, true, true],
-            Mode::WRITE => [High, High, Low],
-            Mode::ADDRESS => [High, High, High]
-        };
 
-        self.bdir.set_state(arr[0]).unwrap();
-        self.bc2.set_state(arr[1]).unwrap();
-        self.bc1.set_state(arr[2]).unwrap();
+        self.bdir.set_state(bdir).unwrap();
+        //self.bc2.set_state(arr[1]).unwrap();
+        self.bc1.set_state(bc1).unwrap();
     }
 
-    pub fn write_data_bus(&mut self, value: u8) {
-        info!("Writing to data bus...");
-        set_pins!(value, self.data_pins, 7,6,5,4,3,2,1,0);
-        //{
-            //delay(1_000_000_000);
-            //}
-    }
+
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         info!("Writing to register...");
-        self.write_data_bus(register as u8);
         self.set_mode(Mode::ADDRESS);
+        self.data_bus.set_u32(register);
         self.set_mode(Mode::INACTIVE);
-        self.write_data_bus(value);
         self.set_mode(Mode::WRITE);
+        self.write_data_bus(value);
         self.set_mode(Mode::INACTIVE);
     }
 
@@ -134,7 +189,7 @@ where
     }
 
     pub fn volumeA(&mut self, volume: u8) {
-        self.write_register(Register::ALevel, volume);
+        self.write_register(Register::ALevel, volume & 0x0F);
     }
 
     pub fn tone_hz(&mut self, frequency: u32) {

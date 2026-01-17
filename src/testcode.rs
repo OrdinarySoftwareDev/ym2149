@@ -13,7 +13,7 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 use pwm_freq::PwmFreq;
-
+//mod ym2149f;
 
 use rp2040_hal::{self as hal, pac::io_bank0::gpio};
 
@@ -30,14 +30,32 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::pwm::SetDutyCycle;
 use embedded_hal::digital::OutputPin;
 
-mod ym2149f;
-use crate::ym2149f::YM2149F;
+//use crate::ym2149f::YM2149F;
 
 pub enum Mode {
     INACTIVE,
     //READ,
     WRITE,
     ADDRESS
+}
+
+pub enum Register {
+    AFreq8bitFinetone,
+    AFreq4bitRoughtone,
+    BFreq8bitFinetone,
+    BFreq4bitRoughtone,
+    CFreq8bitFinetone,
+    CFreq4bitRoughtone,
+    NoiseFreq5bit,
+    IoPortMixerSettings,
+    ALevel,
+    BLevel,
+    CLevel,
+    EFreq8bitFineAdj,
+    EFreq8bitRoughAdj,
+    EShape,
+    DataIoA,
+    DataIoB
 }
 
 fn set_mode(
@@ -97,7 +115,6 @@ fn main() -> ! {
     pwm.set_top(0);
     pwm.set_ph_correct();
     pwm.enable();
-    Vec
 
     // Output channel A on PWM0 to GPIO 0
     let channel = &mut pwm.channel_a;
@@ -133,7 +150,7 @@ fn main() -> ! {
 
     data_bus.set_u32(0x00);
 
-    let chip = YM2149F::new(bc1, bdir)
+    set_mode(&mut bdir, &mut bc1, Mode::INACTIVE);
 
     macro_rules! write_to_bus {
         ($value:expr) => {
@@ -152,5 +169,66 @@ fn main() -> ! {
         };
     }
 
-    loop {}
+    write_register!(7, 0b11111110); //  0 = enabled
+    write_register!(8, 0b00001111);
+
+    let mut c: i32 = 0x001;
+    let mut dir = true;
+
+    delay.delay_ms(100);
+
+    loop {
+        let rough = c & 0x0FF;
+        let fine = c & 0xF00;
+
+        write_register!(0, rough);
+        write_register!(1, (fine >> 8) & 0xF);
+
+        c += (dir as i32) * 2 - 1;
+
+        if (c == 0x0FF) || (c == 0x000) { // 0xFF = 490Hz, 0x00 = inf Hz, fT = fMaster / 16*TP, fMaster = fT*16*TP, fMaster ~= 490*16*255 ~= 1999200
+            dir = !dir;
+            led.set_high();
+            delay.delay_ms(250);
+            led.set_low();
+            delay.delay_ms(250);
+        }
+
+        delay.delay_ms(10);
+
+    }
+
+    // 00000000 write 0x00 to bus
+    // 11100000 write to r7 (io)
+    // 10000011 enable channel a, io a/b
+    // 00010000 write to r8 (channel a level)
+    // 11110000 set level to 0x0F
+    // 00000000 write to r0 (channel a freq. fine)
+    // 10011000 write 0x19
+    // 10000000 write to r1 (channel a freq. rough)
+    // 10000000 write 0x01
+
+    /*loop {
+        for i in 0..8 { // test sequence
+            chip.write_data_bus(2_u8.pow(i) as u8);
+        }
+    }*/
+
+    /*macro_rules! ym2149f {
+        ($pins:expr, $($gpio:ident),*) => {{
+            YM2149F::new(
+                $(
+                    $pins.$gpio.into_push_pull_output()
+                ),*
+            )
+        }};
+    }
+
+    let mut chip = ym2149f!(pins,
+        gpio28,
+        gpio18, gpio19, gpio20, gpio21, gpio22, gpio12, gpio11, gpio10, // D0 through D7
+        gpio26,
+        gpio2,
+        gpio27
+    );*/
 }
