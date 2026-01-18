@@ -8,24 +8,16 @@ license = "MIT OR Apache-2.0"
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = { version = "1.0.0" }
+rp2040-hal = { version="0.11", features=["rt", "critical-section-impl"] }
+rp2040-boot2 = "0.3"
 
 defmt = "1"
 defmt-rtt = "1"
-panic-probe = { version = "1", features = ["print-defmt"] }
-
-pwm-freq = { path = "../pwm-freq" }
-
-# We're using a Pico by default on this template
 nfp1315 = "1.0.0"
+panic-halt = "1.0.0"
 
-# but you can use any BSP. Uncomment this to use the pro_micro_rp2040 BSP instead
-# sparkfun-pro-micro-rp2040 = "0.8"
-
-# If you're not going to use a Board Support Package you'll need these:
-rp2040-hal = { version="0.11", features=["rt", "critical-section-impl"] }
-rp2040-boot2 = "0.3"
-pio = "0.2"
-frunk = "0.4.4"
+[[example]]
+name = "sweep"
 
 # cargo build/run
 [profile.dev]

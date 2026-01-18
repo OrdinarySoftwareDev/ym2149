@@ -1,6 +1,11 @@
+use core::{
+    convert::{ From, Into },
+    clone::Clone
+};
+
 use embedded_hal::digital::{ OutputPin, PinState };
 use PinState::{ High, Low };
-use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PullDown, SioOutput};
+use rp2040_hal::gpio::{ DynPinId, FunctionSio, Pin, PullDown, SioOutput};
 
 pub trait OutputBus {
     fn write_u8(&mut self, data: u8);
@@ -160,12 +165,12 @@ pub enum Mode {
 impl Mode {
     pub const STATES: [(PinState, PinState, PinState); 4] = [
         (Low, High, Low),  // INACTIVE
-        (High, Low, Low), // READ
-        (Low, Low, High), // WRITE
+        (Low, High, High), // READ
+        (High, High, Low), // WRITE
         (High, High, High), // ADDRESS
     ];
 
-    pub fn pin_states(self) -> (PinState, PinState, PinState) {
+    fn pin_states(self) -> (PinState, PinState, PinState) {
         Self::STATES[self as usize].clone()
     }
 }

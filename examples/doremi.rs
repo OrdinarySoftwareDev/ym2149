@@ -1,0 +1,125 @@
+#![no_std]
+#![no_main]
+
+// Bootloader
+use rp2040_boot2;
+#[link_section = ".boot2"]
+#[used]
+pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
+
+// Deps
+use defmt_rtt as _;
+use panic_halt as _;
+
+use embedded_hal::{ delay::{ DelayNs }, digital::OutputPin };
+use rp2040_hal::{ self as hal };
+
+use hal::{
+    clocks::init_clocks_and_plls,
+    pac,
+    sio::Sio,
+    watchdog::Watchdog
+};
+
+// The actual HAL crate
+use microtune::ym2149::{*};
+
+#[hal::entry]
+fn main() -> ! {
+    // Default configuration
+    let mut pac = pac::Peripherals::take().unwrap();
+    let mut watchdog = Watchdog::new(pac.WATCHDOG);
+    let sio = Sio::new(pac.SIO);
+
+    let external_xtal_freq_hz = 12_000_000u32;
+    let clocks = init_clocks_and_plls(
+        external_xtal_freq_hz,
+        pac.XOSC,
+        pac.CLOCKS,
+        pac.PLL_SYS,
+        pac.PLL_USB,
+        &mut pac.RESETS,
+        &mut watchdog,
+    )
+    .ok()
+    .unwrap();
+
+    let mut timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+
+    let pins = hal::gpio::Pins::new(
+        pac.IO_BANK0,
+        pac.PADS_BANK0,
+        sio.gpio_bank0,
+        &mut pac.RESETS,
+    );
+
+    // Turn on the LED to give any sign of life (optional)
+    let mut led = pins.gpio25.into_push_pull_output();
+    led.set_high();
+
+    // Frequency (in Hz, u32) of the clock the chip is connected to (Pin 22 on the YM2149)
+    let master_clock_freq: u32 = 2_000_000;
+
+    // DynPins for the 8-bit data bus (LSB, pin D0 to MSB, pin D7)
+    let data_pins = [
+        pins.gpio1.into_push_pull_output().into_dyn_pin(),
+        pins.gpio2.into_push_pull_output().into_dyn_pin(),
+        pins.gpio3.into_push_pull_output().into_dyn_pin(),
+        pins.gpio4.into_push_pull_output().into_dyn_pin(),
+        pins.gpio5.into_push_pull_output().into_dyn_pin(),
+        pins.gpio6.into_push_pull_output().into_dyn_pin(),
+        pins.gpio7.into_push_pull_output().into_dyn_pin(),
+        pins.gpio8.into_push_pull_output().into_dyn_pin()
+    ];
+
+    // Initialize a DataBus
+    let mut data_bus = DataBus::new(data_pins);
+    data_bus.write_u8(0); // Write 0b0000_0000 as a safety measure
+
+    // Bus control decoder pins
+    let bc1 = pins.gpio9.into_push_pull_output();
+    let bdir = pins.gpio10.into_push_pull_output();
+
+    // Reset the chip (optional but recommended)
+    let mut reset_pin = pins.gpio11.into_push_pull_output();
+
+    reset_pin.set_low();
+    timer.delay_ms(1);
+    reset_pin.set_high();
+    timer.delay_ms(1);
+
+    // Build the chip by passing:
+    let mut chip = YM2149::new(
+        data_bus,           // - A variable w/ type that implements the `OutputBus` trait
+        master_clock_freq,  // - The frequency of the master clock
+        bc1,                // - The GPIO pin connected to BC1
+        bdir                // - The GPIO pin connected to BDIR
+    );
+
+    // Set the chip's mode to `Inactive`
+    chip.set_mode(Mode::INACTIVE);
+    // Configure the mixer according to the datasheet (the [docs](#alevel) also explain this process)
+    chip.write_register(Register::IoPortMixerSettings, 0b00111110);
+    // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
+    chip.volume(AudioChannel::A, 0xF);
+
+    // Do-re-mi code
+    const C_MAJOR: [u32; 8] = [262, 294, 330, 349, 392, 440, 494, 523];
+    let mut i: isize = 0;
+    let mut dir: isize = 0;
+
+    loop {
+        // Make sure we don't go out of bounds
+        chip.volume(AudioChannel::A, 0xF);
+        chip.tone_hz(AudioChannel::A, C_MAJOR[i as usize]);
+
+        // Move in a ping-pong fashion, playing the first and last notes twice
+        dir += (i == 0) as isize - (i == 7) as isize;
+        i = (i + dir).clamp(0, 7);
+
+        // Delay
+        timer.delay_ms(250);
+        chip.volume(AudioChannel::A, 0x0);
+        timer.delay_ms(250);
+    }
+}
