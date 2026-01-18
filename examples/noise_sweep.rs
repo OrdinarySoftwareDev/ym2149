@@ -91,7 +91,7 @@ fn main() -> ! {
     // Set the chip's mode to `Inactive`
     chip.set_mode(Mode::INACTIVE);
     // Configure the mixer according to the datasheet (the docs for IoPortMixerSettings also explain this process)
-    chip.write_register(Register::IoPortMixerSettings, 0b11111110);
+    chip.write_register(Register::IoPortMixerSettings, 0b11110111);
 
     // Reset the chip (optional but recommended)
     let mut reset_pin = pins.gpio11.into_push_pull_output();
@@ -102,18 +102,17 @@ fn main() -> ! {
     timer.delay_ms(10);
 
 
-    // Sweep code
-    let mut c: u16 = 0x001;
+    // Noise sweep code
+    let mut c: u8 = 0x001;
 
     loop {
         // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
         chip.volume(AudioChannel::A, 0xF);
-        // Play a tone on channel A with TP = c
-        // The TP consists of 12 bits: 4 bits for 'rough', and 8 bits for 'fine' adjustment.
-        if c < 0xA00 {
-            chip.tone(AudioChannel::A, c);
-            c += 0x002;
-            timer.delay_ms(5);
+        // Set noise frequency to 'c'
+        if c < 0b00011111 {
+            chip.set_noise_freq(c);
+            c += 0x001;
+            timer.delay_ms(40);
         } else {
             timer.delay_ms(500);
             c = 0x001;
