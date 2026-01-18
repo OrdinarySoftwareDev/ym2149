@@ -11,18 +11,13 @@ pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 use defmt_rtt as _;
 use panic_halt as _;
 
-use embedded_hal::{ delay::{ DelayNs }, digital::OutputPin };
-use rp2040_hal::{ self as hal };
+use embedded_hal::{delay::DelayNs, digital::OutputPin};
+use rp2040_hal::{self as hal};
 
-use hal::{
-    clocks::init_clocks_and_plls,
-    pac,
-    sio::Sio,
-    watchdog::Watchdog
-};
+use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 // The actual ym2149 HAL crate
-use ym2149::{*};
+use ym2149::*;
 
 #[hal::entry]
 fn main() -> ! {
@@ -69,7 +64,7 @@ fn main() -> ! {
         pins.gpio5.into_push_pull_output().into_dyn_pin(),
         pins.gpio6.into_push_pull_output().into_dyn_pin(),
         pins.gpio7.into_push_pull_output().into_dyn_pin(),
-        pins.gpio8.into_push_pull_output().into_dyn_pin()
+        pins.gpio8.into_push_pull_output().into_dyn_pin(),
     ];
 
     // Initialize a DataBus
@@ -82,10 +77,10 @@ fn main() -> ! {
 
     // Build the chip by passing:
     let mut chip = YM2149::new(
-        data_bus,           // - A variable w/ type that implements the `OutputBus` trait
-        master_clock_freq,  // - The frequency of the master clock
-        bc1,                // - The GPIO pin connected to BC1
-        bdir                // - The GPIO pin connected to BDIR
+        data_bus,          // - A variable w/ type that implements the `OutputBus` trait
+        master_clock_freq, // - The frequency of the master clock
+        bc1,               // - The GPIO pin connected to BC1
+        bdir,              // - The GPIO pin connected to BDIR
     );
 
     // Set the chip's mode to `Inactive`
@@ -100,7 +95,6 @@ fn main() -> ! {
     timer.delay_ms(10);
     reset_pin.set_high();
     timer.delay_ms(10);
-
 
     // Noise sweep code
     let mut c: u8 = 0x001;

@@ -22,13 +22,11 @@
 //! **When in doubt, check the specsheet!**
 #![no_std]
 #![no_main]
-use core::{
-    convert::{ From, Into }
-};
+use core::convert::{From, Into};
 
-use embedded_hal::digital::{ OutputPin, PinState };
-use PinState::{ High, Low };
-use rp2040_hal::gpio::{ DynPinId, FunctionSio, Pin, PullDown, SioOutput};
+use embedded_hal::digital::{OutputPin, PinState};
+use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PullDown, SioOutput};
+use PinState::{High, Low};
 
 /// Helper trait that lets you configure any sort of output bus.
 /// It abstracts writing 8-bit values to various bus implementations.
@@ -55,10 +53,9 @@ pub trait OutputBus {
     fn write_u8(&mut self, data: u8);
 }
 
-
 /// This struct makes an array of length 8 for any type that implements OutputPin.
 pub struct DataBus<T> {
-    pins: [T; 8]
+    pins: [T; 8],
 }
 
 impl<T> DataBus<T>
@@ -73,23 +70,18 @@ where
 impl OutputBus for DataBus<Pin<DynPinId, FunctionSio<SioOutput>, PullDown>> {
     fn write_u8(&mut self, data: u8) {
         for bit in 0..8 {
-            let state = if (data >> bit) & 1 == 1 {
-                High
-            } else {
-                Low
-            };
+            let state = if (data >> bit) & 1 == 1 { High } else { Low };
             let _ = self.pins[bit].set_state(state);
         }
     }
 }
-
 
 /// An error related to note parsing.
 pub enum NoteParseError {
     InvalidLength,
     InvalidAccidental,
     InvalidNote,
-    OctaveOutOfRange
+    OctaveOutOfRange,
 }
 
 /// A YM2149 chip struct.
@@ -134,7 +126,7 @@ where
     data_bus: DATABUS,
     master_clock_frequency: u32,
     bc1: BC1,
-    bdir: BDIR
+    bdir: BDIR,
 }
 
 /// One of the 16 registers (0-15) of the YM2149 sound chip.
@@ -228,7 +220,7 @@ pub enum Register {
     /// Data of I/O port A
     DataIoA,
     /// Data of I/O port B
-    DataIoB
+    DataIoB,
 }
 
 impl From<Register> for u8 {
@@ -262,14 +254,14 @@ pub enum Mode {
     /// DA7~DA0 set to input mode, and data is written to register currently being addressed.
     WRITE,
     /// DA7~DA0 set to input mode, and address is fetched from register array.
-    ADDRESS
+    ADDRESS,
 }
 
 impl Mode {
     pub const STATES: [(PinState, PinState, PinState); 4] = [
-        (Low, High, Low),  // INACTIVE
-        (Low, High, High), // READ
-        (High, High, Low), // WRITE
+        (Low, High, Low),   // INACTIVE
+        (Low, High, High),  // READ
+        (High, High, Low),  // WRITE
         (High, High, High), // ADDRESS
     ];
 
@@ -287,14 +279,14 @@ pub enum AudioChannel {
     /// ANALOG CHANNEL B (Pin 3)
     B,
     /// ANALOG CHANNEL C (Pin 38)
-    C
+    C,
 }
 
-impl <DATABUS, BC1, BDIR> YM2149<DATABUS, BC1, BDIR>
+impl<DATABUS, BC1, BDIR> YM2149<DATABUS, BC1, BDIR>
 where
     DATABUS: OutputBus,
     BC1: OutputPin,
-    BDIR: OutputPin
+    BDIR: OutputPin,
 {
     /// Create a new struct for the YM2149.
     pub fn new(data_bus: DATABUS, master_clock_frequency: u32, bc1: BC1, bdir: BDIR) -> Self {
@@ -302,7 +294,7 @@ where
             data_bus,
             master_clock_frequency,
             bc1,
-            bdir
+            bdir,
         }
     }
 
@@ -396,8 +388,6 @@ where
         self.write_register(8 + channel as u8, volume & 0x1F);
     }
 
-
-
     // ============================================================
     // ========================= THE VOID =========================
     // ============================================================
@@ -424,7 +414,9 @@ where
     fn note(&mut self, channel: AudioChannel, note_s: &'static str) -> Result<(), NoteParseError> {
         todo!(".note() is not yet implemented: Unfinished code");
         // Code below is unreachable
-        if note_s.len() < 2 || note_s.len() > 3 { return Err(NoteParseError::InvalidLength); }
+        if note_s.len() < 2 || note_s.len() > 3 {
+            return Err(NoteParseError::InvalidLength);
+        }
         let semitones_from_a4: u32; // NOTE TO SELF: f = f0 * 2 ^ (n / 12) | f0 - reference pitch, n - semitones away from ref.
         Ok(())
     }
