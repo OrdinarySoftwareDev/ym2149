@@ -15,6 +15,7 @@ defmt = "1"
 defmt-rtt = "1"
 nfp1315 = "1.0.0"
 panic-halt = "1.0.0"
+libm = "0.2.15"
 
 [[example]]
 name = "sweep"

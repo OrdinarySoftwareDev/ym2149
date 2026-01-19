@@ -1,3 +1,11 @@
+//! Example code that tests all functions of the crate across all channels.
+//!
+//! That includes:
+//! - The modes INACTIVE, ACCESS, WRITE (READ is not yet impld)
+//! - Tone generation (sweep)
+//! - Noise generation (sweep)
+//! - Envelopes
+//! - Sending / receiving data through the I/O ports
 #![no_std]
 #![no_main]
 
@@ -86,7 +94,7 @@ fn main() -> ! {
     // Set the chip's mode to `Inactive`
     chip.set_mode(Mode::INACTIVE);
     // Configure the mixer according to the datasheet (the docs for IoPortMixerSettings also explain this process)
-    chip.write_register(Register::IoPortMixerSettings, 0b00111110);
+    chip.write_register(Register::IoPortMixerSettings, 0b11111110);
 
     // Reset the chip (optional but recommended)
     let mut reset_pin = pins.gpio11.into_push_pull_output();
@@ -96,30 +104,21 @@ fn main() -> ! {
     reset_pin.set_high();
     timer.delay_ms(10);
 
-    // Do-re-mi code
-    const C_MAJOR: [u32; 8] = [262, 294, 330, 349, 392, 440, 494, 523];
-
-    // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
-    chip.volume(AudioChannel::A, 0xF);
-
-    let mut i: isize = 0;
-    let mut direction: isize = 0;
+    // Sweep code
+    let mut c: u16 = 0x001;
 
     loop {
-        // Play a tone on channel A and keep it audible for 250ms
-        chip.tone_hz(AudioChannel::A, C_MAJOR[i as usize]);
-        timer.delay_ms(250);
-
-        // Silence the channel for 250ms before playing the next note
-        chip.volume(AudioChannel::A, 0x0);
-        timer.delay_ms(250);
-
-        // Bring the volume back up
+        // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
         chip.volume(AudioChannel::A, 0xF);
-
-        // Access the array in a ping-pong fashion, playing the first and last notes twice
-        direction += (i == 0) as isize - (i == 7) as isize;
-        // Make sure we don't go out of range by clamping `i`
-        i = (i + direction).clamp(0, 7);
+        // Play a tone on channel A with TP = c
+        // The TP consists of 12 bits: 4 bits for 'rough', and 8 bits for 'fine' adjustment.
+        if c < 0xA00 {
+            chip.tone(AudioChannel::A, c);
+            c += 0x002;
+            timer.delay_ms(5);
+        } else {
+            timer.delay_ms(500);
+            c = 0x001;
+        }
     }
 }

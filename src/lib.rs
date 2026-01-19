@@ -22,11 +22,31 @@
 //! **When in doubt, check the specsheet!**
 #![no_std]
 #![no_main]
-use core::convert::{From, Into};
+use core::{convert::{From, Into}, ops::{Add, BitXor, Sub, SubAssign}};
 
 use embedded_hal::digital::{OutputPin, PinState};
-use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PullDown, SioOutput};
+use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PinGroup, PullDown, SioOutput};
 use PinState::{High, Low};
+
+const REFERENCE_PITCH: f32 = 440.0;
+
+// =========================================================
+// ========================= ITEMS =========================
+// =========================================================
+
+/// This wrapper struct makes an array of length 8 for any type that implements OutputPin.
+pub struct DataBus<T> {
+    pins: [T; 8],
+}
+
+impl<T> DataBus<T>
+where
+    T: OutputPin,
+{
+    pub fn new(pins: [T; 8]) -> Self {
+        Self { pins }
+    }
+}
 
 /// Helper trait that lets you configure any sort of output bus.
 /// It abstracts writing 8-bit values to various bus implementations.
@@ -53,20 +73,6 @@ pub trait OutputBus {
     fn write_u8(&mut self, data: u8);
 }
 
-/// This struct makes an array of length 8 for any type that implements OutputPin.
-pub struct DataBus<T> {
-    pins: [T; 8],
-}
-
-impl<T> DataBus<T>
-where
-    T: OutputPin,
-{
-    pub fn new(pins: [T; 8]) -> Self {
-        Self { pins }
-    }
-}
-
 impl OutputBus for DataBus<Pin<DynPinId, FunctionSio<SioOutput>, PullDown>> {
     fn write_u8(&mut self, data: u8) {
         for bit in 0..8 {
@@ -76,57 +82,10 @@ impl OutputBus for DataBus<Pin<DynPinId, FunctionSio<SioOutput>, PullDown>> {
     }
 }
 
-/// An error related to note parsing.
-pub enum NoteParseError {
-    InvalidLength,
-    InvalidAccidental,
-    InvalidNote,
-    OctaveOutOfRange,
-}
-
-/// A YM2149 chip struct.
-/// Below is the simplest example code you need to build one:
-/// ```no_run
-/// // Frequency (in Hz, u32) of the clock the chip is connected to (Pin 22 on the YM2149)
-/// let master_clock_freq: u32 = 2_000_000;
-///
-/// // DynPins for the 8-bit data bus (LSB, pin D0 to MSB, pin D7)
-/// let data_pins = [
-///     pins.gpio1.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio2.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio3.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio4.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio5.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio6.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio7.into_push_pull_output().into_dyn_pin(),
-///     pins.gpio8.into_push_pull_output().into_dyn_pin()
-/// ];
-/// // Initialize a DataBus
-/// let mut data_bus = DataBus::new(data_pins);
-/// data_bus.write_u8(0); // Write 0b0000_0000 as a safety measure
-///
-/// // Bus control decoder pins (BC2 is redundant - connect it to VCC)
-/// let bc1 = pins.gpio9.into_push_pull_output();
-/// let bdir = pins.gpio10.into_push_pull_output();
-///
-/// // Build the chip by passing:
-/// let mut chip = YM2149::new(
-///     data_bus,           // - A variable of type that implements the `OutputBus` trait
-///     master_clock_freq,  // - The frequency of the master clock
-///     bc1,                // - GPIO pin connected to BC1
-///     bdir                // - GPIO pin connected to BDIR
-/// );
-/// ```
-pub struct YM2149<DATABUS, BC1, BDIR>
-where
-    DATABUS: OutputBus,
-    BC1: OutputPin,
-    BDIR: OutputPin,
-{
-    data_bus: DATABUS,
-    master_clock_frequency: u32,
-    bc1: BC1,
-    bdir: BDIR,
+impl OutputBus for PinGroup {
+    fn write_u8(&mut self, data: u8) {
+        todo!("Implement OutputBus for PinGroup so users can set all pins at once.");
+    }
 }
 
 /// One of the 16 registers (0-15) of the YM2149 sound chip.
@@ -229,6 +188,13 @@ impl From<Register> for u8 {
     }
 }
 
+#[repr(u8)]
+/// One of the two GPIO ports of the YM2149.
+pub enum IoPort {
+    A = 0xE,
+    B = 0xF,
+}
+
 /// The four modes of the bus control decoder.
 ///
 /// Bus control decoder table, no redundancy:
@@ -280,6 +246,175 @@ pub enum AudioChannel {
     B,
     /// ANALOG CHANNEL C (Pin 38)
     C,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(i8)]
+pub enum BaseNote {
+    C = -9,
+    D = -7,
+    E = -5,
+    F = -4,
+    G = -2,
+    A = 0,
+    B = 2,
+}
+
+impl From<BaseNote> for f32 {
+    fn from(bn: BaseNote) -> f32 { bn as i8 as f32 }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(i8)]
+pub enum Accidental {
+    Natural = 0,
+    Sharp = 2,
+    Flat = -2,
+    MicroSharp = 1,
+    MicroFlat = -1,
+}
+
+impl From<Accidental> for f32 {
+    fn from(acc: Accidental) -> f32 { (acc as i8) as f32 / 2.0 }
+}
+
+/// A musical note.
+#[derive(Debug, Clone, Copy)]
+pub struct Note {
+    base_note: BaseNote,
+    octave: u8,
+    accidental: Option<Accidental>,
+    offset: f32,
+}
+
+impl Note {
+    pub fn new(base_note: BaseNote, octave: u8, accidental: Option<Accidental>) -> Self {
+        Self {
+            base_note: base_note,
+            octave: octave,
+            accidental: accidental,
+            offset: 0.0,
+        }
+    }
+
+    pub fn transpose(self, semitones: f32) -> Self {
+        Self {
+            offset: semitones,
+            ..self
+        }
+    }
+
+    pub fn as_hz(&self) -> u32 {
+        // NOTE TO SELF: f = f0 * 2 ^ (n / 12) | f0 - reference pitch, n - semitones away from ref.
+        use libm::{powf, roundf};
+
+        let distance_a4: f32 =
+            f32::from(self.base_note)
+            + f32::from(self.accidental.unwrap_or(Accidental::Natural))
+            + (self.octave.clamp(0, 14) as f32 - 4.0) * 12.0
+            + self.offset;
+
+        roundf(REFERENCE_PITCH * powf(2.0, distance_a4 / 12.0)) as u32
+    }
+}
+
+
+/// A helper enum for setting the envelope repetition frequency f_e.
+#[derive(Debug, Clone, Copy)]
+pub enum EnvelopeFrequency {
+    Hertz(u16),
+    BeatsPerMinute(u16),
+    Integer(u16),
+}
+
+impl EnvelopeFrequency {
+    fn as_ep(self, master_clock_frequency: u32) -> u16 {
+        match self {
+            Self::Hertz(f_e) => master_clock_frequency.checked_div(256 * (f_e as u32)).unwrap_or(1) as u16,
+            Self::BeatsPerMinute(bpm) => 60 * Self::Hertz(bpm).as_ep(master_clock_frequency),
+            Self::Integer(x) => x
+        }
+    }
+}
+
+/// A helper enum for setting the envelope's shape.
+///
+/// To invert the shape use EnvelopeShape::invert().
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum EnvelopeShape {
+    /// Fade out and hold low
+    FadeOut = 0b1001,
+    /// Fade in and hold high
+    FadeIn = 0b1101,
+    /// Fade in then hold low
+    Tooth = 0b1111,
+    /// Fade in every repetition
+    Saw = 0b1100,
+    /// Alternate between fade out and fade in
+    Triangle = 0b1110,
+}
+
+impl EnvelopeShape {
+    pub fn invert(self) -> u8 {
+        let binary: u8 = self.into();
+        binary.bitxor(0b00000100)
+    }
+}
+
+impl From<EnvelopeShape> for u8 {
+    fn from(value: EnvelopeShape) -> u8 {
+        value as u8
+    }
+}
+
+// =========================================================
+// ====================== CHIP STRUCT ======================
+// =========================================================
+
+/// A YM2149 chip struct.
+/// Below is the simplest example code you need to build one:
+/// ```no_run
+/// // Frequency (in Hz, u32) of the clock the chip is connected to (Pin 22 on the YM2149)
+/// let master_clock_freq: u32 = 2_000_000;
+///
+/// // DynPins for the 8-bit data bus (LSB, pin D0 to MSB, pin D7)
+/// let data_pins = [
+///     pins.gpio1.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio2.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio3.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio4.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio5.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio6.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio7.into_push_pull_output().into_dyn_pin(),
+///     pins.gpio8.into_push_pull_output().into_dyn_pin()
+/// ];
+/// // Initialize a DataBus
+/// let mut data_bus = DataBus::new(data_pins);
+/// data_bus.write_u8(0); // Write 0b0000_0000 as a safety measure
+///
+/// // Bus control decoder pins (BC2 is redundant - connect it to VCC)
+/// let bc1 = pins.gpio9.into_push_pull_output();
+/// let bdir = pins.gpio10.into_push_pull_output();
+///
+/// // Build the chip by passing:
+/// let mut chip = YM2149::new(
+///     data_bus,           // - A variable of type that implements the `OutputBus` trait
+///     master_clock_freq,  // - The frequency of the master clock
+///     bc1,                // - GPIO pin connected to BC1
+///     bdir                // - GPIO pin connected to BDIR
+/// );
+/// ```
+pub struct YM2149<DATABUS, BC1, BDIR>
+where
+    DATABUS: OutputBus,
+    BC1: OutputPin,
+    BDIR: OutputPin,
+{
+    data_bus: DATABUS,
+    master_clock_frequency: u32,
+    bc1: BC1,
+    bdir: BDIR,
 }
 
 impl<DATABUS, BC1, BDIR> YM2149<DATABUS, BC1, BDIR>
@@ -344,6 +479,28 @@ where
         self.set_mode(Mode::INACTIVE);
     }
 
+    /// Write a value to one of the chip's [GPIO ports](#IoPort).
+    /// Note: This is a helper function.
+    pub fn write_io(&mut self, port: IoPort, value: u8) {
+        self.write_register(port as u8, value);
+    }
+
+    /// Set the envelope generator's frequency.
+    pub fn set_envelope_frequency(&mut self, frequency: EnvelopeFrequency) {
+        let r: u16 = frequency.as_ep(self.master_clock_frequency);
+
+        let rough: u8 = (r >> 8) as u8; // High byte
+        let fine: u8 = r as u8; // Low byte
+
+        self.write_register(Register::EFreq8bitRoughAdj, rough);
+        self.write_register(Register::EFreq8bitFineAdj, fine);
+    }
+
+    /// Set the envelope generator's shape.
+    pub fn set_envelope_shape<T: Into<u8>>(&mut self, shape: T) {
+        self.write_register(0xD, shape.into());
+    }
+
     /// Play a tone with a TP of `period` on an [AudioChannel](#AudioChannel).
     ///
     /// The formula for the frequency is
@@ -365,7 +522,15 @@ where
         self.tone(channel, tp as u16); // Take lowest 16 bits
     }
 
+    /// Play a [Note](#Note) on an [AudioChannel](#AudioChannel).
+    pub fn play_note(&mut self, channel: AudioChannel, note: &Note) {
+        let note_f = note.as_hz();
+        self.tone_hz(channel, note_f);
+    }
+
     /// Set the frequency of the noise generator.
+    ///
+    /// Mask: 0x1F
     pub fn set_noise_freq(&mut self, frequency: u8) {
         self.write_register(6, frequency & 0x1F);
     }
@@ -406,20 +571,22 @@ where
     ///
     /// Feel free to try implementing it yourself, at your own risk.
     fn read(&mut self, register: Register) -> u8 {
-        unimplemented!("Mode::READ and .read() are not yet usable.");
+        unimplemented!("Mode::READ and any functions associated with it are not yet usable.");
     }
 
     #[allow(unused)]
-    /// Play a note `(note_s: &'static str)` on an [AudioChannel](#AudioChannel).
-    fn note(&mut self, channel: AudioChannel, note_s: &'static str) -> Result<(), NoteParseError> {
-        todo!(".note() is not yet implemented: Unfinished code");
-        // Code below is unreachable
-        if note_s.len() < 2 || note_s.len() > 3 {
-            return Err(NoteParseError::InvalidLength);
-        }
-        let semitones_from_a4: u32; // NOTE TO SELF: f = f0 * 2 ^ (n / 12) | f0 - reference pitch, n - semitones away from ref.
-        Ok(())
+    /// Reads a value from a given I/O port and outputs it to the data bus.
+    ///
+    /// ---
+    /// # Warning!
+    ///
+    /// Mode::READ makes the chip output 5V to the data bus. It is **STRONGLY** recommended
+    /// to use a level shifter in order to prevent permanent damage to your board.
+    ///
+    /// This method is **unimplemented** *(at least, not for now...)*
+    ///
+    /// Feel free to try implementing it yourself, at your own risk.
+    fn read_io(&mut self, port: IoPort) -> u8 {
+        unimplemented!("Mode::READ and any functions associated with it are not yet usable.");
     }
-
-    // TODO: Envelope & I/O control
 }

@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use core::time;
+
 // Bootloader
 use rp2040_boot2;
 #[link_section = ".boot2"]
@@ -97,28 +99,63 @@ fn main() -> ! {
     timer.delay_ms(10);
 
     // Do-re-mi code
-    const C_MAJOR: [u32; 8] = [262, 294, 330, 349, 392, 440, 494, 523];
+    let bpm: u16 = 120;
 
-    // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
-    chip.volume(AudioChannel::A, 0xF);
+    let root_note: Note = Note::new(
+        BaseNote::C,
+        3,
+        None
+    );
 
-    let mut i: isize = 0;
-    let mut direction: isize = 0;
+    let major_scale: [f32; 8] = [
+        0.0,
+        2.0,
+        4.0,
+        5.0,
+        7.0,
+        9.0,
+        11.0,
+        12.0
+    ];
+
+    // Make channel A's volume controlled by the envelope generator
+    chip.volume(AudioChannel::A, 0x10);
+
+    // Set the frequency of the envelope
+    {
+        use EnvelopeFrequency::*;
+
+        // Try uncommenting any of these! You should get the same result no matter which line you pick.
+        // chip.set_envelope_frequency(Integer(3_906));
+        chip.set_envelope_frequency(BeatsPerMinute(bpm));
+        // chip.set_envelope_frequency(Hertz(2));
+    }
+
+
+
+    let mut i: i8 = 0;
+    let mut direction: i8 = 0;
+
+    let lowest = root_note;
+    let highest = root_note.transpose(major_scale[7]);
 
     loop {
-        // Play a tone on channel A and keep it audible for 250ms
-        chip.tone_hz(AudioChannel::A, C_MAJOR[i as usize]);
-        timer.delay_ms(250);
+        // Play a note on channel A and keep it audible for 250ms
+        chip.play_note(AudioChannel::A, &root_note.transpose(major_scale[i as usize]));
+        chip.set_envelope_shape(0b00001001);
+        timer.delay_ms(30 * 1000 / bpm as u32);
 
-        // Silence the channel for 250ms before playing the next note
-        chip.volume(AudioChannel::A, 0x0);
-        timer.delay_ms(250);
 
-        // Bring the volume back up
-        chip.volume(AudioChannel::A, 0xF);
+        chip.play_note(AudioChannel::A, &match direction {
+            1 => lowest,
+            0 => if i < 4 { lowest } else { highest }
+            _ => highest,
+        });
+        chip.set_envelope_shape(0b00001001);
+        timer.delay_ms(30 * 1000 / bpm as u32);
 
         // Access the array in a ping-pong fashion, playing the first and last notes twice
-        direction += (i == 0) as isize - (i == 7) as isize;
+        direction += (i == 0) as i8 - (i == 7) as i8;
         // Make sure we don't go out of range by clamping `i`
         i = (i + direction).clamp(0, 7);
     }
