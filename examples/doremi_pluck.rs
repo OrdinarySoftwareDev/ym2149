@@ -19,7 +19,7 @@ use rp2040_hal::{self as hal};
 use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 // The actual ym2149 HAL crate
-use ym2149::*;
+use ym2149::{audio::EnvelopeShape, *};
 
 #[hal::entry]
 fn main() -> ! {
@@ -119,11 +119,11 @@ fn main() -> ! {
     ];
 
     // Make channel A's volume controlled by the envelope generator
-    chip.volume(AudioChannel::A, 0x10);
+    chip.volume(audio::AudioChannel::A, 0x10);
 
     // Set the frequency of the envelope
     {
-        use EnvelopeFrequency::*;
+        use audio::EnvelopeFrequency::*;
 
         // Try uncommenting any of these! You should get the same result no matter which line you pick.
         // chip.set_envelope_frequency(Integer(3_906));
@@ -139,19 +139,21 @@ fn main() -> ! {
     let lowest = root_note;
     let highest = root_note.transpose(major_scale[7]);
 
+    let fade_out = EnvelopeShape::BuiltIn(audio::BuiltinEnvelopeShape::FadeOut);
+
     loop {
         // Play a note on channel A and keep it audible for 250ms
-        chip.play_note(AudioChannel::A, &root_note.transpose(major_scale[i as usize]));
-        chip.set_envelope_shape(0b00001001);
+        chip.play_note(audio::AudioChannel::A, &root_note.transpose(major_scale[i as usize]));
+        chip.set_envelope_shape(fade_out);
         timer.delay_ms(30 * 1000 / bpm as u32);
 
 
-        chip.play_note(AudioChannel::A, &match direction {
+        chip.play_note(audio::AudioChannel::A, &match direction {
             1 => lowest,
             0 => if i < 4 { lowest } else { highest }
             _ => highest,
         });
-        chip.set_envelope_shape(0b00001001);
+        chip.set_envelope_shape(fade_out);
         timer.delay_ms(30 * 1000 / bpm as u32);
 
         // Access the array in a ping-pong fashion, playing the first and last notes twice

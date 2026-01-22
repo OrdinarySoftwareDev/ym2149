@@ -109,11 +109,11 @@ fn main() -> ! {
 
     loop {
         // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
-        chip.volume(AudioChannel::A, 0xF);
+        chip.volume(audio::AudioChannel::A, 0xF);
         // Play a tone on channel A with TP = c
         // The TP consists of 12 bits: 4 bits for 'rough', and 8 bits for 'fine' adjustment.
         if c < 0xA00 {
-            chip.tone(AudioChannel::A, c);
+            chip.tone(audio::AudioChannel::A, c);
             c += 0x002;
             timer.delay_ms(5);
         } else {

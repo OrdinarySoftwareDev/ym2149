@@ -19,8 +19,8 @@ use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 // The actual ym2149 HAL crate
 use ym2149::*;
 
-fn delay_16ths(timer: &mut Timer, bpm: u16, n: u16) {
-    let ms = n * 15 * 1_000 / bpm;
+fn delay_32nds(timer: &mut Timer, bpm: u16, n: u16) {
+    let ms = n * 7 * 1_000 / bpm;
     timer.delay_ms(ms as u32);
 }
 
@@ -101,8 +101,8 @@ fn main() -> ! {
     reset_pin.set_high();
     timer.delay_ms(10);
 
-    // Battle against a true hero
-    let bpm: u16 = 155;
+    // Coin sound effect
+    let bpm: u16 = 100;
 
     // Make channel A's volume controlled by the envelope generator
     chip.volume(AudioChannel::A, 0x10);
@@ -117,69 +117,25 @@ fn main() -> ! {
         // chip.set_envelope_frequency(Hertz(2));
     }
 
-    let ds7 = Note::new(BaseNote::D, 7, Some(Accidental::Sharp));
-    let f7 = Note::new(BaseNote::F, 7, None);
-    let as6 = Note::new(BaseNote::A, 6, Some(Accidental::Sharp));
-    let c7 = Note::new(BaseNote::C, 7, None);
-    let gs6 = Note::new(BaseNote::G, 6, Some(Accidental::Sharp));
-    let f6 = Note::new(BaseNote::F, 6, None);
-    let cs7 = Note::new(BaseNote::C, 7, Some(Accidental::Sharp));
-    let ds6 = Note::new(BaseNote::D, 6, Some(Accidental::Sharp));
-    let gs7 = Note::new(BaseNote::G, 7, Some(Accidental::Sharp));
-    let g7 = Note::new(BaseNote::G, 7, None);
-    let g6 = Note::new(BaseNote::G, 6, None);
+    let b6 = Note::new(BaseNote::B, 6, None);
+    let e7 = Note::new(BaseNote::E, 7, None);
 
-    let pattern1 = [
-        &ds7,
-        &f7,
-        &as6,
-        &c7,
-        &gs6,
-        &f6,
-    ];
-
-    let pattern2 = [
-        &cs7,
-        &gs6,
-        &ds7,
-        &gs6,
-        &g6,
-        &ds6,
-    ];
-
-    let pattern3 = [
-        &cs7,
-        &gs6,
-        &ds7,
-        &gs7,
-        &g7
-    ];
-
-    let timing1 = [3,3,3,3,2,2];
-    let timing2 = [3,3,3,3,4];
-
-
+    let timing = [1,8];
 
     loop {
-        for (i, note) in pattern1.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
-            delay_16ths(&mut timer, bpm, timing1[i]);
-        }
-        for (i, note) in pattern2.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
-            delay_16ths(&mut timer, bpm, timing1[i]);
-        }
-        for (i, note) in pattern1.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
-            delay_16ths(&mut timer, bpm, timing1[i]);
-        }
-        for (i, note) in pattern3.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
-            delay_16ths(&mut timer, bpm, timing2[i]);
-        }
+        chip.play_note_with_envelope(
+            AudioChannel::A,
+            &b6,
+            BuiltinEnvelopeShape::FadeIn.invert()
+        );
+        delay_32nds(&mut timer, bpm, timing[0]);
+        chip.play_note_with_envelope(
+            AudioChannel::A,
+            &e7,
+            BuiltinEnvelopeShape::FadeOut
+        );
+        delay_32nds(&mut timer, bpm, timing[1]);
+
+        timer.delay_ms(1_000);
     }
 }

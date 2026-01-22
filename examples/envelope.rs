@@ -11,7 +11,7 @@ pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 use defmt_rtt as _;
 use panic_halt as _;
 
-use embedded_hal::{delay::DelayNs, digital::OutputPin};
+use embedded_hal::{delay::DelayNs, digital::{OutputPin, StatefulOutputPin}};
 use rp2040_hal::{self as hal};
 
 use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
@@ -96,24 +96,37 @@ fn main() -> ! {
     reset_pin.set_high();
     timer.delay_ms(10);
 
-    chip.volume(AudioChannel::A, 0b00010000);
+    chip.set_envelope_frequency(EnvelopeFrequency::Hertz(2));
     chip.tone_hz(AudioChannel::A, 440);
-    chip.play_note(
-        AudioChannel::A,
-        &Note {
-            base_note: BaseNote::A,
-            octave: 4,
-            accidental: None
-        }
-    );
 
+    let shapes: [BuiltinEnvelopeShape; 5] = [
+        BuiltinEnvelopeShape::FadeIn,
+        BuiltinEnvelopeShape::FadeOut,
+        BuiltinEnvelopeShape::Saw,
+        BuiltinEnvelopeShape::Tooth,
+        BuiltinEnvelopeShape::Triangle,
+    ];
 
-    chip.set_envelope_frequency(EnvelopeFrequency::Hz(2));
+    let mut inverted = false;
 
     loop {
-        for shape in 0b1000..=0b1111 {
-            chip.set_envelope_shape(shape);
+        chip.volume(AudioChannel::A, 0b00010000);
+
+        for x in shapes {
+            chip.set_envelope_shape(
+                if inverted {x.invert()}
+                else {x.as_u8()}
+            );
             timer.delay_ms(2_000);
         }
+
+        chip.volume(AudioChannel::A, 0);
+
+        led.set_low();
+
+        inverted = !inverted;
+        timer.delay_ms(2_000);
+
+        led.set_high();
     }
 }

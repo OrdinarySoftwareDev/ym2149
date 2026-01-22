@@ -21,32 +21,14 @@
 //!
 //! **When in doubt, check the specsheet!**
 #![no_std]
-#![no_main]
-use core::{convert::{From, Into}, ops::{Add, BitXor, Sub, SubAssign}};
+use core::{convert::{From, Into}};
 
-use embedded_hal::digital::{OutputPin, PinState};
 use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PinGroup, PullDown, SioOutput};
+use embedded_hal::digital::{OutputPin, PinState};
 use PinState::{High, Low};
 
-const REFERENCE_PITCH: f32 = 440.0;
-
-// =========================================================
-// ========================= ITEMS =========================
-// =========================================================
-
-/// This wrapper struct makes an array of length 8 for any type that implements OutputPin.
-pub struct DataBus<T> {
-    pins: [T; 8],
-}
-
-impl<T> DataBus<T>
-where
-    T: OutputPin,
-{
-    pub fn new(pins: [T; 8]) -> Self {
-        Self { pins }
-    }
-}
+pub mod audio;
+use audio::*;
 
 /// Helper trait that lets you configure any sort of output bus.
 /// It abstracts writing 8-bit values to various bus implementations.
@@ -73,6 +55,20 @@ pub trait OutputBus {
     fn write_u8(&mut self, data: u8);
 }
 
+/// This wrapper struct makes an array of length 8 for any type that implements OutputPin.
+pub struct DataBus<T> {
+    pins: [T; 8],
+}
+
+impl<T> DataBus<T>
+where
+    T: OutputPin,
+{
+    pub fn new(pins: [T; 8]) -> Self {
+        Self { pins }
+    }
+}
+
 impl OutputBus for DataBus<Pin<DynPinId, FunctionSio<SioOutput>, PullDown>> {
     fn write_u8(&mut self, data: u8) {
         for bit in 0..8 {
@@ -87,6 +83,8 @@ impl OutputBus for PinGroup {
         todo!("Implement OutputBus for PinGroup so users can set all pins at once.");
     }
 }
+
+
 
 /// One of the 16 registers (0-15) of the YM2149 sound chip.
 ///
@@ -182,17 +180,60 @@ pub enum Register {
     DataIoB,
 }
 
-impl From<Register> for u8 {
-    fn from(value: Register) -> Self {
-        value as u8
+pub trait ValidRegister {
+    fn address(self) -> u8;
+}
+
+impl ValidRegister for u8 {
+    fn address(self) -> u8 {
+        self.clamp(0, 15)
+    }
+}
+
+impl ValidRegister for Register {
+    fn address(self) -> u8 {
+        (self as u8).clamp(0, 15)
     }
 }
 
 #[repr(u8)]
-/// One of the two GPIO ports of the YM2149.
-pub enum IoPort {
-    A = 0xE,
-    B = 0xF,
+pub enum IoMode {
+    Input = 0,
+    Output = 1,
+}
+
+pub struct IoPortMixerSettings {
+    gpio_port_a_mode: IoMode,
+    gpio_port_b_mode: IoMode,
+    noise_ch_c: bool,
+    noise_ch_b: bool,
+    noise_ch_a: bool,
+    tone_ch_c: bool,
+    tone_ch_b: bool,
+    tone_ch_a: bool,
+}
+
+impl IoPortMixerSettings {
+    pub fn as_u8(self) -> u8 {
+        let self_array = [
+            self.gpio_port_a_mode as u8 == 1,
+            self.gpio_port_b_mode as u8 == 1,
+            self.noise_ch_c,
+            self.noise_ch_b,
+            self.noise_ch_a,
+            self.tone_ch_c,
+            self.tone_ch_b,
+            self.tone_ch_a,
+        ];
+
+        let mut byte = 0_u8;
+
+        for i in (0..8).rev() {
+            byte += (self_array[i as usize] as u8) << i;
+        }
+
+        byte
+    }
 }
 
 /// The four modes of the bus control decoder.
@@ -237,135 +278,11 @@ impl Mode {
     }
 }
 
-/// One of the 3 analog audio channels (A, B, C) of the YM2149.
-#[derive(Debug, Clone, Copy)]
-pub enum AudioChannel {
-    /// ANALOG CHANNEL A (Pin 4)
-    A,
-    /// ANALOG CHANNEL B (Pin 3)
-    B,
-    /// ANALOG CHANNEL C (Pin 38)
-    C,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(i8)]
-pub enum BaseNote {
-    C = -9,
-    D = -7,
-    E = -5,
-    F = -4,
-    G = -2,
-    A = 0,
-    B = 2,
-}
-
-impl From<BaseNote> for f32 {
-    fn from(bn: BaseNote) -> f32 { bn as i8 as f32 }
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(i8)]
-pub enum Accidental {
-    Natural = 0,
-    Sharp = 2,
-    Flat = -2,
-    MicroSharp = 1,
-    MicroFlat = -1,
-}
-
-impl From<Accidental> for f32 {
-    fn from(acc: Accidental) -> f32 { (acc as i8) as f32 / 2.0 }
-}
-
-/// A musical note.
-#[derive(Debug, Clone, Copy)]
-pub struct Note {
-    base_note: BaseNote,
-    octave: u8,
-    accidental: Option<Accidental>,
-    offset: f32,
-}
-
-impl Note {
-    pub fn new(base_note: BaseNote, octave: u8, accidental: Option<Accidental>) -> Self {
-        Self {
-            base_note: base_note,
-            octave: octave,
-            accidental: accidental,
-            offset: 0.0,
-        }
-    }
-
-    pub fn transpose(self, semitones: f32) -> Self {
-        Self {
-            offset: semitones,
-            ..self
-        }
-    }
-
-    pub fn as_hz(&self) -> u32 {
-        // NOTE TO SELF: f = f0 * 2 ^ (n / 12) | f0 - reference pitch, n - semitones away from ref.
-        use libm::{powf, roundf};
-
-        let distance_a4: f32 =
-            f32::from(self.base_note)
-            + f32::from(self.accidental.unwrap_or(Accidental::Natural))
-            + (self.octave.clamp(0, 14) as f32 - 4.0) * 12.0
-            + self.offset;
-
-        roundf(REFERENCE_PITCH * powf(2.0, distance_a4 / 12.0)) as u32
-    }
-}
-
-
-/// A helper enum for setting the envelope repetition frequency f_e.
-#[derive(Debug, Clone, Copy)]
-pub enum EnvelopeFrequency {
-    Hertz(u16),
-    BeatsPerMinute(u16),
-    Integer(u16),
-}
-
-impl EnvelopeFrequency {
-    fn as_ep(self, master_clock_frequency: u32) -> u16 {
-        match self {
-            Self::Hertz(f_e) => master_clock_frequency.checked_div(256 * (f_e as u32)).unwrap_or(1) as u16,
-            Self::BeatsPerMinute(bpm) => 60 * Self::Hertz(bpm).as_ep(master_clock_frequency),
-            Self::Integer(x) => x
-        }
-    }
-}
-
-/// A helper enum for setting the envelope's shape.
-///
-/// To invert the shape use EnvelopeShape::invert().
-#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-pub enum EnvelopeShape {
-    /// Fade out and hold low
-    FadeOut = 0b1001,
-    /// Fade in and hold high
-    FadeIn = 0b1101,
-    /// Fade in then hold low
-    Tooth = 0b1111,
-    /// Fade in every repetition
-    Saw = 0b1100,
-    /// Alternate between fade out and fade in
-    Triangle = 0b1110,
-}
-
-impl EnvelopeShape {
-    pub fn invert(self) -> u8 {
-        let binary: u8 = self.into();
-        binary.bitxor(0b00000100)
-    }
-}
-
-impl From<EnvelopeShape> for u8 {
-    fn from(value: EnvelopeShape) -> u8 {
-        value as u8
-    }
+/// One of the two GPIO ports of the YM2149.
+pub enum IoPort {
+    A = 0xE,
+    B = 0xF,
 }
 
 // =========================================================
@@ -468,15 +385,23 @@ where
     /// // Configure the mixer according to the datasheet
     /// chip.write_register(Register::IoPortMixerSettings, 0b11111110);
     /// ```
-    pub fn write_register<T: Into<u8>>(&mut self, register: T, value: u8) {
-        let r: u8 = register.into().clamp(0, 15);
+    pub fn write_register<T: ValidRegister>(&mut self, register: T, value: u8) {
+        let r: u8 = register.address();
 
         self.set_mode(Mode::ADDRESS);
         self.data_bus.write_u8(r);
         self.set_mode(Mode::INACTIVE);
+
         self.set_mode(Mode::WRITE);
         self.data_bus.write_u8(value);
         self.set_mode(Mode::INACTIVE);
+    }
+
+    pub fn setup_io_and_mixer(&mut self, settings: IoPortMixerSettings) {
+        self.write_register(
+            Register::IoPortMixerSettings,
+            settings.as_u8()
+        );
     }
 
     /// Write a value to one of the chip's [GPIO ports](#IoPort).
@@ -497,7 +422,7 @@ where
     }
 
     /// Set the envelope generator's shape.
-    pub fn set_envelope_shape<T: Into<u8>>(&mut self, shape: T) {
+    pub fn set_envelope_shape(&mut self, shape: EnvelopeShape) {
         self.write_register(0xD, shape.into());
     }
 
@@ -526,6 +451,12 @@ where
     pub fn play_note(&mut self, channel: AudioChannel, note: &Note) {
         let note_f = note.as_hz();
         self.tone_hz(channel, note_f);
+    }
+
+    /// Play a [Note](#Note) on an [AudioChannel](#AudioChannel) with a given [BuiltinEnvelopeShape](#BuiltinEnvelopeShape).
+    pub fn play_note_with_envelope(&mut self, channel: AudioChannel, note: &Note, with_envelope: EnvelopeShape) {
+        self.play_note(channel, note);
+        self.set_envelope_shape(with_envelope);
     }
 
     /// Set the frequency of the noise generator.

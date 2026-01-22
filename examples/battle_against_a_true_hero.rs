@@ -1,9 +1,3 @@
-//! Example code that tests all functions of the crate across a chosen channel.
-//!
-//! That includes:
-//! - Tone generation (sweep)
-//! - Noise generation (sweep)
-//! - Envelopes
 #![no_std]
 #![no_main]
 
@@ -18,12 +12,18 @@ use defmt_rtt as _;
 use panic_halt as _;
 
 use embedded_hal::{delay::DelayNs, digital::OutputPin};
-use rp2040_hal::{self as hal};
+use rp2040_hal::{self as hal, Timer};
 
 use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 // The actual ym2149 HAL crate
-use ym2149::*;
+use ym2149::{audio::EnvelopeShape, *};
+use audio::{Accidental, AudioChannel, BaseNote, EnvelopeFrequency, Note};
+
+fn delay_16ths(timer: &mut Timer, bpm: u16, n: u16) {
+    let ms = n * 15 * 1_000 / bpm;
+    timer.delay_ms(ms as u32);
+}
 
 #[hal::entry]
 fn main() -> ! {
@@ -102,13 +102,85 @@ fn main() -> ! {
     reset_pin.set_high();
     timer.delay_ms(10);
 
-    // Test code
-    let mut c: u16 = 0x001;
+    // Battle against a true hero
+    let bpm: u16 = 155;
 
-    let channel = audio::AudioChannel::A;
+    // Make channel A's volume controlled by the envelope generator
+    chip.volume(AudioChannel::A, 0x10);
 
-    // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
-    chip.volume(channel, 0xF);
-    chip.tone(channel, 200);
-    loop {}
+    // Set the frequency of the envelope
+    {
+        use EnvelopeFrequency::*;
+
+        // Try uncommenting any of these! You should get the same result no matter which line you pick.
+        // chip.set_envelope_frequency(Integer(3_906));
+        chip.set_envelope_frequency(BeatsPerMinute(bpm));
+        // chip.set_envelope_frequency(Hertz(2));
+    }
+
+    let ds7 = Note::new(BaseNote::D, 7, Some(Accidental::Sharp));
+    let f7 = Note::new(BaseNote::F, 7, None);
+    let as6 = Note::new(BaseNote::A, 6, Some(Accidental::Sharp));
+    let c7 = Note::new(BaseNote::C, 7, None);
+    let gs6 = Note::new(BaseNote::G, 6, Some(Accidental::Sharp));
+    let f6 = Note::new(BaseNote::F, 6, None);
+    let cs7 = Note::new(BaseNote::C, 7, Some(Accidental::Sharp));
+    let ds6 = Note::new(BaseNote::D, 6, Some(Accidental::Sharp));
+    let gs7 = Note::new(BaseNote::G, 7, Some(Accidental::Sharp));
+    let g7 = Note::new(BaseNote::G, 7, None);
+    let g6 = Note::new(BaseNote::G, 6, None);
+
+    let pattern1 = [
+        &ds7,
+        &f7,
+        &as6,
+        &c7,
+        &gs6,
+        &f6,
+    ];
+
+    let pattern2 = [
+        &cs7,
+        &gs6,
+        &ds7,
+        &gs6,
+        &g6,
+        &ds6,
+    ];
+
+    let pattern3 = [
+        &cs7,
+        &gs6,
+        &ds7,
+        &gs7,
+        &g7
+    ];
+
+    let timing1 = [3,3,3,3,2,2];
+    let timing2 = [3,3,3,3,4];
+
+    let fade_out = EnvelopeShape::BuiltIn(())
+
+    loop {
+        for (i, note) in pattern1.iter().enumerate() {
+            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
+            chip.set_envelope_shape(0b1000);
+            delay_16ths(&mut timer, bpm, timing1[i]);
+        }
+        for (i, note) in pattern2.iter().enumerate() {
+            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
+            chip.set_envelope_shape(0b1000);
+            delay_16ths(&mut timer, bpm, timing1[i]);
+        }
+        for (i, note) in pattern1.iter().enumerate() {
+            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
+            chip.set_envelope_shape(0b1000);
+            delay_16ths(&mut timer, bpm, timing1[i]);
+        }
+        for (i, note) in pattern3.iter().enumerate() {
+            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
+            chip.set_envelope_shape(0b1000);
+            delay_16ths(&mut timer, bpm, timing2[i]);
+        }
+    }
 }
