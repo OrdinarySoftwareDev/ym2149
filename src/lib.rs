@@ -203,14 +203,14 @@ pub enum IoMode {
 }
 
 pub struct IoPortMixerSettings {
-    gpio_port_a_mode: IoMode,
-    gpio_port_b_mode: IoMode,
-    noise_ch_c: bool,
-    noise_ch_b: bool,
-    noise_ch_a: bool,
-    tone_ch_c: bool,
-    tone_ch_b: bool,
-    tone_ch_a: bool,
+    pub gpio_port_a_mode: IoMode,
+    pub gpio_port_b_mode: IoMode,
+    pub noise_ch_c: bool,
+    pub noise_ch_b: bool,
+    pub noise_ch_a: bool,
+    pub tone_ch_c: bool,
+    pub tone_ch_b: bool,
+    pub tone_ch_a: bool,
 }
 
 impl IoPortMixerSettings {
@@ -422,7 +422,7 @@ where
     }
 
     /// Set the envelope generator's shape.
-    pub fn set_envelope_shape(&mut self, shape: EnvelopeShape) {
+    pub fn set_envelope_shape(&mut self, shape: &EnvelopeShape) {
         self.write_register(0xD, shape.into());
     }
 
@@ -454,7 +454,7 @@ where
     }
 
     /// Play a [Note](#Note) on an [AudioChannel](#AudioChannel) with a given [BuiltinEnvelopeShape](#BuiltinEnvelopeShape).
-    pub fn play_note_with_envelope(&mut self, channel: AudioChannel, note: &Note, with_envelope: EnvelopeShape) {
+    pub fn play_note_with_envelope(&mut self, channel: AudioChannel, note: &Note, with_envelope: &EnvelopeShape) {
         self.play_note(channel, note);
         self.set_envelope_shape(with_envelope);
     }

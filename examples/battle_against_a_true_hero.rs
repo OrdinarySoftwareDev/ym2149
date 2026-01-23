@@ -18,7 +18,7 @@ use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 // The actual ym2149 HAL crate
 use ym2149::{audio::EnvelopeShape, *};
-use audio::{Accidental, AudioChannel, BaseNote, EnvelopeFrequency, Note};
+use audio::{Accidental, AudioChannel, BaseNote, BuiltinEnvelopeShape, EnvelopeFrequency, Note};
 
 fn delay_16ths(timer: &mut Timer, bpm: u16, n: u16) {
     let ms = n * 15 * 1_000 / bpm;
@@ -63,7 +63,6 @@ fn main() -> ! {
 
     // DynPins for the 8-bit data bus (LSB, pin D0 to MSB, pin D7)
     let data_pins = [
-        pins.gpio1.into_push_pull_output().into_dyn_pin(),
         pins.gpio2.into_push_pull_output().into_dyn_pin(),
         pins.gpio3.into_push_pull_output().into_dyn_pin(),
         pins.gpio4.into_push_pull_output().into_dyn_pin(),
@@ -71,6 +70,7 @@ fn main() -> ! {
         pins.gpio6.into_push_pull_output().into_dyn_pin(),
         pins.gpio7.into_push_pull_output().into_dyn_pin(),
         pins.gpio8.into_push_pull_output().into_dyn_pin(),
+        pins.gpio9.into_push_pull_output().into_dyn_pin(),
     ];
 
     // Initialize a DataBus
@@ -78,8 +78,8 @@ fn main() -> ! {
     data_bus.write_u8(0); // Write 0b0000_0000 as a safety measure
 
     // Bus control decoder pins
-    let bc1 = pins.gpio9.into_push_pull_output();
-    let bdir = pins.gpio10.into_push_pull_output();
+    let bc1 = pins.gpio10.into_push_pull_output();
+    let bdir = pins.gpio11.into_push_pull_output();
 
     // Build the chip by passing:
     let mut chip = YM2149::new(
@@ -95,7 +95,7 @@ fn main() -> ! {
     chip.write_register(Register::IoPortMixerSettings, 0b11111110);
 
     // Reset the chip (optional but recommended)
-    let mut reset_pin = pins.gpio11.into_push_pull_output();
+    let mut reset_pin = pins.gpio12.into_push_pull_output();
 
     reset_pin.set_low();
     timer.delay_ms(10);
@@ -103,7 +103,7 @@ fn main() -> ! {
     timer.delay_ms(10);
 
     // Battle against a true hero
-    let bpm: u16 = 155;
+    let bpm: u16 = 150;
 
     // Make channel A's volume controlled by the envelope generator
     chip.volume(AudioChannel::A, 0x10);
@@ -159,27 +159,27 @@ fn main() -> ! {
     let timing1 = [3,3,3,3,2,2];
     let timing2 = [3,3,3,3,4];
 
-    let fade_out = EnvelopeShape::BuiltIn(())
+    let fade_out = &EnvelopeShape::Builtin(BuiltinEnvelopeShape::FadeOut);
 
     loop {
         for (i, note) in pattern1.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
+            chip.play_note(AudioChannel::A, note);
+            chip.set_envelope_shape(fade_out);
             delay_16ths(&mut timer, bpm, timing1[i]);
         }
         for (i, note) in pattern2.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
+            chip.play_note(AudioChannel::A, note);
+            chip.set_envelope_shape(fade_out);
             delay_16ths(&mut timer, bpm, timing1[i]);
         }
         for (i, note) in pattern1.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
+            chip.play_note(AudioChannel::A, note);
+            chip.set_envelope_shape(fade_out);
             delay_16ths(&mut timer, bpm, timing1[i]);
         }
         for (i, note) in pattern3.iter().enumerate() {
-            chip.play_note(AudioChannel::A, &note.transpose(-12.0));
-            chip.set_envelope_shape(0b1000);
+            chip.play_note(AudioChannel::A, note);
+            chip.set_envelope_shape(fade_out);
             delay_16ths(&mut timer, bpm, timing2[i]);
         }
     }

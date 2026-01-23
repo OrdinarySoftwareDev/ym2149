@@ -13,6 +13,7 @@ pub enum AudioChannel {
     C,
 }
 
+/// One of the 7 white keys in the C Major scale.
 #[derive(Debug, Clone, Copy)]
 #[repr(i8)]
 pub enum BaseNote {
@@ -29,6 +30,7 @@ impl From<BaseNote> for f32 {
     fn from(bn: BaseNote) -> f32 { bn as i8 as f32 }
 }
 
+/// An accidental. It corresponds to a i8 value in quarter tones.
 #[derive(Debug, Clone, Copy)]
 #[repr(i8)]
 pub enum Accidental {
@@ -120,6 +122,10 @@ pub enum BuiltinEnvelopeShape {
     Triangle = 0b00001110,
 }
 
+/// A raw envelope for more precise control of channel levels.
+///
+/// It consists of a `data` field - which is an array of u8 values with length 4096,
+/// and a length given in beats.
 pub struct RawEnvelope {
     data: [u8; 4096],
     length_beats: u8,
@@ -146,22 +152,23 @@ impl RawEnvelope {
     }
 }
 
+// An enum for all EnvelopeShape types
 pub enum EnvelopeShape {
     Builtin(BuiltinEnvelopeShape),
     InvertedBuiltin(BuiltinEnvelopeShape),
+    CustomBuiltin(u8),
     RawEnvelope(RawEnvelope),
-    CustomU8(u8),
 }
 
-impl From<EnvelopeShape> for u8 {
-    fn from(value: EnvelopeShape) -> Self {
+impl From<&EnvelopeShape> for u8 {
+    fn from(value: &EnvelopeShape) -> Self {
         use EnvelopeShape::*;
 
         match value {
-            Builtin(builtin) => builtin as u8,
-            InvertedBuiltin(builtin) => (builtin as u8).bitxor(0b00000100),
+            Builtin(builtin) => *builtin as u8,
+            InvertedBuiltin(builtin) => (*builtin as u8).bitxor(0b00000100),
+            CustomBuiltin(n) => *n,
             RawEnvelope(raw) => todo!(),
-            CustomU8(n) => n,
         }
     }
 }

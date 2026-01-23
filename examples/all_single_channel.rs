@@ -63,7 +63,6 @@ fn main() -> ! {
 
     // DynPins for the 8-bit data bus (LSB, pin D0 to MSB, pin D7)
     let data_pins = [
-        pins.gpio1.into_push_pull_output().into_dyn_pin(),
         pins.gpio2.into_push_pull_output().into_dyn_pin(),
         pins.gpio3.into_push_pull_output().into_dyn_pin(),
         pins.gpio4.into_push_pull_output().into_dyn_pin(),
@@ -71,6 +70,7 @@ fn main() -> ! {
         pins.gpio6.into_push_pull_output().into_dyn_pin(),
         pins.gpio7.into_push_pull_output().into_dyn_pin(),
         pins.gpio8.into_push_pull_output().into_dyn_pin(),
+        pins.gpio9.into_push_pull_output().into_dyn_pin(),
     ];
 
     // Initialize a DataBus
@@ -78,8 +78,8 @@ fn main() -> ! {
     data_bus.write_u8(0); // Write 0b0000_0000 as a safety measure
 
     // Bus control decoder pins
-    let bc1 = pins.gpio9.into_push_pull_output();
-    let bdir = pins.gpio10.into_push_pull_output();
+    let bc1 = pins.gpio10.into_push_pull_output();
+    let bdir = pins.gpio11.into_push_pull_output();
 
     // Build the chip by passing:
     let mut chip = YM2149::new(
@@ -92,10 +92,21 @@ fn main() -> ! {
     // Set the chip's mode to `Inactive`
     chip.set_mode(Mode::INACTIVE);
     // Configure the mixer according to the datasheet (the docs for IoPortMixerSettings also explain this process)
-    chip.write_register(Register::IoPortMixerSettings, 0b11111110);
+    chip.setup_io_and_mixer(
+        IoPortMixerSettings {
+            gpio_port_a_mode: IoMode::Output,
+            gpio_port_b_mode: IoMode::Output,
+            noise_ch_c: false,
+            noise_ch_b: false,
+            noise_ch_a: false,
+            tone_ch_c: false,
+            tone_ch_b: false,
+            tone_ch_a: false
+        }
+    );
 
     // Reset the chip (optional but recommended)
-    let mut reset_pin = pins.gpio11.into_push_pull_output();
+    let mut reset_pin = pins.gpio12.into_push_pull_output();
 
     reset_pin.set_low();
     timer.delay_ms(10);

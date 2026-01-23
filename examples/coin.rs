@@ -18,6 +18,7 @@ use hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 // The actual ym2149 HAL crate
 use ym2149::*;
+use audio::{AudioChannel, BaseNote, BuiltinEnvelopeShape, EnvelopeFrequency, EnvelopeShape, Note};
 
 fn delay_32nds(timer: &mut Timer, bpm: u16, n: u16) {
     let ms = n * 7 * 1_000 / bpm;
@@ -62,7 +63,6 @@ fn main() -> ! {
 
     // DynPins for the 8-bit data bus (LSB, pin D0 to MSB, pin D7)
     let data_pins = [
-        pins.gpio1.into_push_pull_output().into_dyn_pin(),
         pins.gpio2.into_push_pull_output().into_dyn_pin(),
         pins.gpio3.into_push_pull_output().into_dyn_pin(),
         pins.gpio4.into_push_pull_output().into_dyn_pin(),
@@ -70,6 +70,7 @@ fn main() -> ! {
         pins.gpio6.into_push_pull_output().into_dyn_pin(),
         pins.gpio7.into_push_pull_output().into_dyn_pin(),
         pins.gpio8.into_push_pull_output().into_dyn_pin(),
+        pins.gpio9.into_push_pull_output().into_dyn_pin(),
     ];
 
     // Initialize a DataBus
@@ -77,8 +78,8 @@ fn main() -> ! {
     data_bus.write_u8(0); // Write 0b0000_0000 as a safety measure
 
     // Bus control decoder pins
-    let bc1 = pins.gpio9.into_push_pull_output();
-    let bdir = pins.gpio10.into_push_pull_output();
+    let bc1 = pins.gpio10.into_push_pull_output();
+    let bdir = pins.gpio11.into_push_pull_output();
 
     // Build the chip by passing:
     let mut chip = YM2149::new(
@@ -94,7 +95,7 @@ fn main() -> ! {
     chip.write_register(Register::IoPortMixerSettings, 0b11111110);
 
     // Reset the chip (optional but recommended)
-    let mut reset_pin = pins.gpio11.into_push_pull_output();
+    let mut reset_pin = pins.gpio12.into_push_pull_output();
 
     reset_pin.set_low();
     timer.delay_ms(10);
@@ -120,19 +121,21 @@ fn main() -> ! {
     let b6 = Note::new(BaseNote::B, 6, None);
     let e7 = Note::new(BaseNote::E, 7, None);
 
+    let fade_out = &EnvelopeShape::Builtin(BuiltinEnvelopeShape::FadeOut);
+
     let timing = [1,8];
 
     loop {
         chip.play_note_with_envelope(
             AudioChannel::A,
             &b6,
-            BuiltinEnvelopeShape::FadeIn.invert()
+            fade_out,
         );
         delay_32nds(&mut timer, bpm, timing[0]);
         chip.play_note_with_envelope(
             AudioChannel::A,
             &e7,
-            BuiltinEnvelopeShape::FadeOut
+            fade_out,
         );
         delay_32nds(&mut timer, bpm, timing[1]);
 
