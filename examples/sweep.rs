@@ -102,7 +102,7 @@ fn main() -> ! {
     let mut c: u16 = 0xFFF;
 
     // Set channel A's volume to 0x0F (there are only 4 bits dedicated to channel levels)
-    chip.volume(AudioChannel::A, 0xE);
+    chip.volume(AudioChannel::A, 0xF);
 
     loop {
 

@@ -21,7 +21,7 @@
 //!
 //! **When in doubt, check the specsheet!**
 #![no_std]
-use core::{convert::{From, Into}};
+use core::{convert::{Into}};
 
 use rp2040_hal::gpio::{DynPinId, FunctionSio, Pin, PinGroup, PullDown, SioOutput};
 use embedded_hal::digital::{OutputPin, PinState};
@@ -52,29 +52,62 @@ use audio::*;
 /// }
 /// ```
 pub trait OutputBus {
-    fn write_u8(&mut self, data: u8);
+    fn write_register<R: ValidRegister>(&mut self, register: R, data: u8);
 }
 
 /// This wrapper struct makes an array of length 8 for any type that implements OutputPin.
-pub struct DataBus<T> {
-    pins: [T; 8],
-}
-
-impl<T> DataBus<T>
+pub struct PhysicalAYDataBus<D, BC1, BDIR>
 where
-    T: OutputPin,
+    D: OutputPin,
+    BC1: OutputPin,
+    BDIR: OutputPin
 {
-    pub fn new(pins: [T; 8]) -> Self {
-        Self { pins }
-    }
+    data_bus: [D; 8],
+    bc1: BC1,
+    bdir: BDIR,
 }
 
-impl OutputBus for DataBus<Pin<DynPinId, FunctionSio<SioOutput>, PullDown>> {
+impl<D, BC1, BDIR> PhysicalAYDataBus<D, BC1, BDIR>
+where
+    D: OutputPin,
+    BC1: OutputPin,
+    BDIR: OutputPin
+{
+    pub fn new(data_bus: [D; 8], bc1: BC1, bdir: BDIR) -> Self {
+        Self {
+            data_bus,
+            bc1,
+            bdir
+        }
+    }
+
     fn write_u8(&mut self, data: u8) {
         for bit in 0..8 {
             let state = if (data >> bit) & 1 == 1 { High } else { Low };
             let _ = self.pins[bit].set_state(state);
         }
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        let (bdir, _, bc1) = mode.pin_states();
+        self.bdir.set_state(bdir).unwrap();
+        self.bc1.set_state(bc1).unwrap();
+    }
+}
+
+pub struct DummyAYDataBus {}
+
+impl OutputBus for DummyAYDataBus {
+    fn write_register<R: ValidRegister>(&mut self, register: R, data: u8) -> [u8; 2] {
+        [register.address(), data]
+    }
+}
+
+type DynPin = Pin<DynPinId, FunctionSio<SioOutput>, PullDown>;
+
+impl OutputBus for PhysicalAYDataBus<DynPin, DynPin, DynPin> {
+    fn write_register<R: ValidRegister>(&mut self, register: R, data: u8) {
+        self.decoder_control
     }
 }
 
@@ -322,31 +355,23 @@ pub enum IoPort {
 ///     bdir                // - GPIO pin connected to BDIR
 /// );
 /// ```
-pub struct YM2149<DATABUS, BC1, BDIR>
+pub struct YM2149<DATABUS>
 where
     DATABUS: OutputBus,
-    BC1: OutputPin,
-    BDIR: OutputPin,
 {
     data_bus: DATABUS,
     master_clock_frequency: u32,
-    bc1: BC1,
-    bdir: BDIR,
 }
 
-impl<DATABUS, BC1, BDIR> YM2149<DATABUS, BC1, BDIR>
+impl<DATABUS> YM2149<DATABUS>
 where
     DATABUS: OutputBus,
-    BC1: OutputPin,
-    BDIR: OutputPin,
 {
     /// Create a new struct for the YM2149.
-    pub fn new(data_bus: DATABUS, master_clock_frequency: u32, bc1: BC1, bdir: BDIR) -> Self {
+    pub fn new(data_bus: DATABUS, master_clock_frequency: u32) -> Self {
         Self {
             data_bus,
             master_clock_frequency,
-            bc1,
-            bdir,
         }
     }
 
